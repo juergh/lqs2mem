@@ -1,0 +1,23 @@
+Acquiring memory from a Libvirt/KVM virtual machine
+---------------------------------------------------
+
+Use the virsh 'dump' command to save the virtual machine's state to a file on
+disk without stopping the virtual machine, or the virsh 'save' command to save
+the virtual machine's state to a file on disk and stop the virtual machine.  A
+virtual machine stopped with the 'save' command can later be restarted with the
+'restore' command.
+
+The output of the 'dump' command is a file in QEMU-savevm format.  The output
+of the 'save' command is a file in Libvirt-QEMU-save (LQS) format.  An LQS file
+contains a header with the virtual machine's Libvirt configuration, followed by
+QEMU-savevm format data.  The QEMU-savevm format captures the state of a
+virtual machine in a series of sections, each section representing the state of
+a device.  For example, there is CPU state, RAM state, block device state, and
+more.
+
+The lqs2mem tool converts LQS or QEMU-savevm files into raw physical memory
+images.  It reads data from the RAM sections of an LQS or QEMU-savevm input
+file and writes it to a file in which each byte corresponds to a byte of the
+virtual machine's physical memory.  That is, reading from position x of a raw
+physical memory image is equivalent to reading from physical address x of
+memory.
