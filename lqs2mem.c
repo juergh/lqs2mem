@@ -126,7 +126,8 @@ int libvirt_check(FILE *f)
 	DEBUG(1, "Checking for Libvirt-QEMU-save magic...\n");
 
 	if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
-		printf("Failed to read Libvirt-QEMU-save header: %s\n", strerror(errno));
+		printf("Failed to read Libvirt-QEMU-save header: %s\n",
+		       strerror(errno));
 		return -1;
 	}
 
@@ -144,7 +145,8 @@ int libvirt_check(FILE *f)
 
 	/* Skip past Libvirt XML configuration to get to QEMU savevm data. */
 	if (fseek(f, sizeof(hdr) + hdr.xml_len, SEEK_SET)) {
-		printf("Failed seek to QEMU-savevm start: %s\n", strerror(errno));
+		printf("Failed seek to QEMU-savevm start: %s\n",
+		       strerror(errno));
 		return -1;
 	}
 
@@ -218,8 +220,8 @@ int mem_page_write(FILE *f, uint64_t addr, uint8_t *page)
 	}
 
 	if (fwrite(page, PAGE_SIZE, 1, f) != 1) {
-		printf("Failed to write page at address 0x%016llx in output file\n",
-				(unsigned long long) addr);
+		printf("Failed to write page at address 0x%016llx in output "
+		       "file\n", (unsigned long long) addr);
 		return -1;
 	}
 
@@ -262,7 +264,9 @@ int ram_load(FILE *infp, FILE *outfp)
 				printf("Failed to read byte\n");
 				return -1;
 			}
-			DEBUG(2, "Writing page at address 0x%016llx (fill byte = 0x%02x)\n", (unsigned long long) addr, byte);
+			DEBUG(2, "Writing page at address 0x%016llx (fill "
+			      "byte = 0x%02x)\n", (unsigned long long) addr,
+			      byte);
 			mem_page_fill(outfp, addr, byte);
 		} else if (flags & RAM_SAVE_FLAG_PAGE) {
 			uint8_t page[PAGE_SIZE];
@@ -270,7 +274,8 @@ int ram_load(FILE *infp, FILE *outfp)
 				printf("Failed to read page\n");
 				return -1;
 			}
-			DEBUG(2, "Writing page at address 0x%016llx\n", (unsigned long long) addr);
+			DEBUG(2, "Writing page at address 0x%016llx\n",
+			      (unsigned long long) addr);
 			mem_page_write(outfp, addr, page);
 		}
 
@@ -282,7 +287,8 @@ int ram_load(FILE *infp, FILE *outfp)
 	return 0;
 }
 
-int add_section_info(struct section_info **sections, uint32_t section_id, char *name, uint32_t version)
+int add_section_info(struct section_info **sections, uint32_t section_id,
+		     char *name, uint32_t version)
 {
 	if (!strcmp(name, "ram") && version != 3) {
 		printf("Unsupported 'ram' section version\n");
@@ -291,7 +297,8 @@ int add_section_info(struct section_info **sections, uint32_t section_id, char *
 
 	struct section_info *secinfo = malloc(sizeof(struct section_info));
 	if (!secinfo) {
-		printf("Failed to allocate memory for new section info struct\n");
+		printf("Failed to allocate memory for new section info "
+		       "struct\n");
 		return -1;
 	}
 	secinfo->id = section_id;
@@ -306,7 +313,8 @@ int add_section_info(struct section_info **sections, uint32_t section_id, char *
 	return 0;
 }
 
-int handle_section(FILE *infp, FILE *outfp, struct section_info *sections, uint32_t section_id, uint32_t section_type)
+int handle_section(FILE *infp, FILE *outfp, struct section_info *sections,
+		   uint32_t section_id, uint32_t section_type)
 {
 	struct section_info *secinfo = sections;
 	while (secinfo) {
@@ -316,7 +324,8 @@ int handle_section(FILE *infp, FILE *outfp, struct section_info *sections, uint3
 		secinfo = secinfo->next;
 	}
 	if (!secinfo) {
-		printf("No matching section in section list with id %d\n", section_id);
+		printf("No matching section in section list with id %d\n",
+		       section_id);
 		return -1;
 	}
 
@@ -340,8 +349,8 @@ int handle_section(FILE *infp, FILE *outfp, struct section_info *sections, uint3
 		 * followed by low big-endian instance and version ids.
 		 */
 
-		printf("Unsupported '%s' section before final 'ram' section, conversion failed\n",
-				secinfo->name);
+		printf("Unsupported '%s' section before final 'ram' section, "
+		       "conversion failed\n", secinfo->name);
 		return -1;
 	}
 
@@ -370,18 +379,21 @@ int main(int argc, char *argv[])
 
 	FILE *infp = fopen(argv[optind], "r");
 	if (!infp) {
-		printf("Failed to open %s: %s\n", argv[optind], strerror(errno));
+		printf("Failed to open %s: %s\n", argv[optind],
+		       strerror(errno));
 		return -1;
 	}
 
 	FILE *outfp = fopen(argv[optind + 1], "wx");
 	if (!outfp) {
-		printf("Failed to open %s: %s\n", argv[optind + 1], strerror(errno));
+		printf("Failed to open %s: %s\n", argv[optind + 1],
+		       strerror(errno));
 		return -1;
 	}
 
 	if (libvirt_check(infp)) {
-		printf("Libvirt-QEMU-save check failed, checking if this is a raw QEMU-savevm dump\n");
+		printf("Libvirt-QEMU-save check failed, checking if this is a "
+		       "raw QEMU-savevm dump\n");
 		rewind(infp);
 	}
 
@@ -403,7 +415,8 @@ int main(int argc, char *argv[])
 			break;
 		}
 		DEBUG(1, "Section %d (offset = 0x%016llx, type = %d)\n",
-				section_count, (unsigned long long) offset, section_type);
+		      section_count, (unsigned long long) offset,
+		      section_type);
 
 		if (section_type == QEMU_VM_SECTION_START ||
 				section_type == QEMU_VM_SECTION_FULL) {
@@ -438,11 +451,13 @@ int main(int argc, char *argv[])
 			}
 			DEBUG(1, "version = %u\n", version_id);
 
-			if (add_section_info(&sections, section_id, id, version_id)) {
+			if (add_section_info(&sections, section_id, id,
+					     version_id)) {
 				return -1;
 			}
 
-			if (handle_section(infp, outfp, sections, section_id, section_type)) {
+			if (handle_section(infp, outfp, sections, section_id,
+					   section_type)) {
 				return -1;
 			}
 		} else if (section_type == QEMU_VM_SECTION_PART ||
@@ -454,11 +469,13 @@ int main(int argc, char *argv[])
 			}
 			DEBUG(1, "section_id = 0x%08x\n", section_id);
 
-			int r = handle_section(infp, outfp, sections, section_id, section_type);
+			int r = handle_section(infp, outfp, sections,
+					       section_id, section_type);
 			if (r < 0) {
 				return -1;
 			} else if (r > 0) {
-				printf("Handled final 'ram' section, conversion complete\n");
+				printf("Handled final 'ram' section, "
+				       "conversion complete\n");
 				break;
 			}
 		} else {
