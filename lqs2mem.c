@@ -89,7 +89,8 @@ static int debug = 0;
 
 struct section_info {
 	uint32_t id;
-	char *name;
+	uint32_t version;
+	char *idstr;
 	struct section_info *next;
 };
 
@@ -235,8 +236,13 @@ int mem_page_fill(FILE *f, uint64_t addr, uint8_t byte)
 	return mem_page_write(f, addr, page);
 }
 
-int ram_load(FILE *infp, FILE *outfp)
+int ram_load(FILE *infp, FILE *outfp, int version_id)
 {
+	if (version_id != 3) {
+		printf("Unsupported 'ram' section version\n");
+		return -1;
+	}
+
 	/*
 	 * Based on qemu-kvm function of same name in vl.c (0.12.3).
 	 * (Function has moved to arch_init.c in 0.14.0.)
@@ -287,23 +293,19 @@ int ram_load(FILE *infp, FILE *outfp)
 	return 0;
 }
 
-int add_section_info(struct section_info **sections, uint32_t section_id,
-		     char *name, uint32_t version)
+int add_section_info(struct section_info **sections, uint32_t id,
+		     char *idstr, uint32_t version)
 {
-	if (!strcmp(name, "ram") && version != 3) {
-		printf("Unsupported 'ram' section version\n");
-		return -1;
-	}
-
 	struct section_info *secinfo = malloc(sizeof(struct section_info));
 	if (!secinfo) {
 		printf("Failed to allocate memory for new section info "
 		       "struct\n");
 		return -1;
 	}
-	secinfo->id = section_id;
-	secinfo->name = strdup(name);
-	if (!secinfo->name) {
+	secinfo->id = id;
+	secinfo->version = version;
+	secinfo->idstr = strdup(idstr);
+	if (!secinfo->idstr) {
 		printf("Failed to duplicate section name\n");
 		return -1;
 	}
@@ -314,30 +316,29 @@ int add_section_info(struct section_info **sections, uint32_t section_id,
 }
 
 int handle_section(FILE *infp, FILE *outfp, struct section_info *sections,
-		   uint32_t section_id, uint32_t section_type)
+		   uint32_t id, uint32_t type)
 {
 	struct section_info *secinfo = sections;
 	while (secinfo) {
-		if (secinfo->id == section_id) {
+		if (secinfo->id == id) {
 			break;
 		}
 		secinfo = secinfo->next;
 	}
 	if (!secinfo) {
-		printf("No matching section in section list with id %d\n",
-		       section_id);
+		printf("No matching section in section list with id %d\n", id);
 		return -1;
 	}
 
-	if (!strcmp(secinfo->name, "block")) {
+	if (!strcmp(secinfo->idstr, "block")) {
 		if (block_check(infp)) {
 			return -1;
 		}
-	} else if (!strcmp(secinfo->name, "ram")) {
-		if (ram_load(infp, outfp)) {
+	} else if (!strcmp(secinfo->idstr, "ram")) {
+		if (ram_load(infp, outfp, secinfo->version)) {
 			return -1;
 		}
-		if (section_type == QEMU_VM_SECTION_END) {
+		if (type == QEMU_VM_SECTION_END) {
 			return 1;
 		}
 	} else {
@@ -350,7 +351,7 @@ int handle_section(FILE *infp, FILE *outfp, struct section_info *sections,
 		 */
 
 		printf("Unsupported '%s' section before final 'ram' section, "
-		       "conversion failed\n", secinfo->name);
+		       "conversion failed\n", secinfo->idstr);
 		return -1;
 	}
 
@@ -426,18 +427,18 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 			DEBUG(1, "section_id = 0x%08x\n", section_id);
-			uint8_t id_len;
-			if (get_byte(infp, &id_len)) {
-				printf("Failed to read id len\n");
+			uint8_t idstr_len;
+			if (get_byte(infp, &idstr_len)) {
+				printf("Failed to read id string len\n");
 				return -1;
 			}
-			char id[256];
-			if (fread(id, id_len, 1, infp) != 1) {
-				printf("Failed to read id\n");
+			char idstr[256];
+			if (fread(idstr, idstr_len, 1, infp) != 1) {
+				printf("Failed to read idstr\n");
 				return -1;
 			}
-			id[id_len] = '\0';
-			DEBUG(1, "id = '%s'\n", id);
+			idstr[idstr_len] = '\0';
+			DEBUG(1, "idstr = '%s'\n", idstr);
 			uint32_t instance_id;
 			if (get_be32(infp, &instance_id)) {
 				printf("Failed to read instance id\n");
@@ -451,7 +452,7 @@ int main(int argc, char *argv[])
 			}
 			DEBUG(1, "version = %u\n", version_id);
 
-			if (add_section_info(&sections, section_id, id,
+			if (add_section_info(&sections, section_id, idstr,
 					     version_id)) {
 				return -1;
 			}
