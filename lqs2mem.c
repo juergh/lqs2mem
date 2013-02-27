@@ -107,6 +107,9 @@ struct qemud_save_header {
 #define DEBUG(d,...) { if (debug >= d) printf(__VA_ARGS__); }
 static int debug = 0;
 
+int section_size = 0;
+int file_size = 0;
+
 struct section_info {
 	uint32_t id;
 	uint32_t version;
@@ -318,6 +321,10 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 				       mb > 0 ? "MB" : kb > 0 ? "KB" : "Bytes",
 				       (unsigned long long)length);
 
+				if (!strcmp(idstr, section_name)) {
+					section_size = length;
+				}
+
 				total_ram_bytes -= length;
 			}
 		}
@@ -361,6 +368,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 					      "0x%02x)\n",
 					      (unsigned long long) addr, byte);
 					mem_page_fill(outfp, addr, byte);
+					file_size += PAGE_SIZE;
 				}
 			}
 
@@ -376,6 +384,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 					      "0x%016llx\n",
 					      (unsigned long long) addr);
 					mem_page_write(outfp, addr, page);
+					file_size += PAGE_SIZE;
 				}
 			}
 		}
@@ -600,6 +609,21 @@ int main(int argc, char *argv[])
 			return -1;
 		}
 		section_count++;
+	}
+
+	if (file_size || section_size) {
+		if (file_size != section_size) {
+			printf("Error: Wrote %llu Bytes to file %s instead "
+			       "of %llu Bytes\n",
+			       (unsigned long long)file_size,
+			       argv[optind + 1],
+			       (unsigned long long)section_size);
+			return -1;
+		} else {
+			printf("Wrote %llu Bytes to file %s\n",
+			       (unsigned long long)file_size,
+			       argv[optind + 1]);
+		}
 	}
 
 	return 0;
