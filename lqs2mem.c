@@ -3,7 +3,7 @@
  *             physical memory images
  *
  * Copyright (C) 2011-2013 Raytheon Pikewerks Corporation. All rights reserved.
- * Copyright (C) 2013 Hewlett-Packard Company
+ * Copyright (C) 2013 Hewlett-Packard Development Company, L.P. 
  *
  * Authors: Andrew Tappert <andrew@pikewerks.com>
  *          Juerg Haefliger <juerg.haefliger@hp.com>
