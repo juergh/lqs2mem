@@ -2,10 +2,29 @@
  * lqs2mem.c - convert libvirt save files or qemu savevm dumps into raw
  *             physical memory images
  *
+ * Copyright (C) 2011-2013 Raytheon Pikewerks Corporation. All rights reserved.
+ * Copyright (C) 2013 Hewlett-Packard Company
+ *
+ * Authors: Andrew Tappert <andrew@pikewerks.com>
+ *          Juerg Haefliger <juerg.haefliger@hp.com>
+ *
+ * This program is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU General Public License
+ * as published by the Free Software Foundation; either version 2
+ * of the License, or (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301,
+ * USA.
+ *
  * TODO:
  * - handle compressed libvirt-qemu-save formats
- *
- * (c) 2011 Raytheon Pikewerks Corporation.  All rights reserved.
  */
 
 #include <errno.h>
@@ -74,13 +93,14 @@ struct qemud_save_header {
 #define QEMU_VM_SECTION_FULL         0x04
 #define QEMU_VM_SUBSECTION           0x05
 
-/* From qemu-kvm's vl.c (0.12.3): */
+/* From qemu arch-init.c */
 
 #define RAM_SAVE_FLAG_FULL      0x01 /* Obsolete, not used anymore */
 #define RAM_SAVE_FLAG_COMPRESS  0x02
 #define RAM_SAVE_FLAG_MEM_SIZE  0x04
 #define RAM_SAVE_FLAG_PAGE      0x08
 #define RAM_SAVE_FLAG_EOS       0x10
+#define RAM_SAVE_FLAG_CONTINUE  0x20
 
 /****************************************************************************/
 
@@ -136,7 +156,7 @@ int libvirt_check(FILE *f)
 		printf("Invalid Libvirt-QEMU-save magic\n");
 		return -1;
 	}
-	printf("Found Libvirt-QEMU-save magic\n");
+	DEBUG(1, "Found Libvirt-QEMU-save magic\n");
 
 	DEBUG(1, "Libvirt-QEMU-save version = %d\n", hdr.version);
 	if (hdr.version != QEMUD_SAVE_VERSION) {
@@ -169,7 +189,7 @@ int qemu_check(FILE *f)
 		printf("Invalid QEMU-savevm magic\n");
 		return -1;
 	}
-	printf("Found QEMU-savevm magic\n");
+	DEBUG(1, "Found QEMU-savevm magic\n");
 
 	if (get_be32(f, &version)) {
 		printf("Failed to read QEMU-savevm version\n");
@@ -236,59 +256,131 @@ int mem_page_fill(FILE *f, uint64_t addr, uint8_t byte)
 	return mem_page_write(f, addr, page);
 }
 
-int ram_load(FILE *infp, FILE *outfp, int version_id)
+/*
+ * Based on qemu-kvm function of same name in arch_init.c
+ */
+int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 {
-	if (version_id != 3) {
+	uint64_t addr, flags;
+	static int write_to_file = 0;
+
+	if (version_id != 4) {
 		printf("Unsupported 'ram' section version\n");
 		return -1;
 	}
 
-	/*
-	 * Based on qemu-kvm function of same name in vl.c (0.12.3).
-	 * (Function has moved to arch_init.c in 0.14.0.)
-	 */
-
-	while (1) {
-		uint64_t addr;
+	do {
 		if (get_be64(infp, &addr)) {
 			printf("Failed to read address\n");
 			return -1;
 		}
 
-		int flags = addr & ~PAGE_MASK;
+		flags = addr & ~PAGE_MASK;
 		addr &= PAGE_MASK;
 
+		DEBUG(1, "flags = 0x%016lx\n", flags);
+		DEBUG(1, "addr = 0x%016lx\n", addr);
+
 		if (flags & RAM_SAVE_FLAG_MEM_SIZE) {
-			printf("Physical memory size = 0x%016llx (%llu MB)\n",
-					(unsigned long long) addr,
-					(unsigned long long) addr / (1<<20));
+			uint64_t total_ram_bytes = addr;
+
+			DEBUG(1, "Total data size = 0x%016llx (%llu MB)\n",
+			       (unsigned long long) addr,
+			       (unsigned long long) addr / (1<<20));
+
+			while (total_ram_bytes) {
+				uint8_t idstr_len;
+				if (get_byte(infp, &idstr_len)) {
+					printf("Failed to read id string "
+					       "len\n");
+					return -1;
+				}
+				char idstr[256];
+				if (fread(idstr, idstr_len, 1, infp) != 1) {
+					printf("Failed to read idstr\n");
+					return -1;
+				}
+				idstr[idstr_len] = '\0';
+				uint64_t length;
+				if (get_be64(infp, &length)) {
+					printf("Failed to read length\n");
+					return -1;
+				}
+
+				int kb = (length >> 10) > 0 ? length >> 10 : 0;
+				int mb = (length >> 20) > 0 ? length >> 20 : 0;
+				printf("section = %-32s size = %5llu [%s] "
+				       "%12llu [Bytes]\n",
+				       idstr,
+				       (unsigned long long)(mb > 0 ? mb :
+							    kb > 0 ? kb :
+							    length),
+				       mb > 0 ? "MB" : kb > 0 ? "KB" : "Bytes",
+				       (unsigned long long)length);
+
+				total_ram_bytes -= length;
+			}
 		}
 
-		if (flags & RAM_SAVE_FLAG_COMPRESS) {
-			uint8_t byte;
-			if (get_byte(infp, &byte)) {
-				printf("Failed to read byte\n");
-				return -1;
+		if ((flags & RAM_SAVE_FLAG_COMPRESS) ||
+		    (flags & RAM_SAVE_FLAG_PAGE)) {
+
+			if (!(flags & RAM_SAVE_FLAG_CONTINUE)) {
+				uint8_t idstr_len;
+				if (get_byte(infp, &idstr_len)) {
+					printf("Failed to read id string "
+					       "len\n");
+					return -1;
+				}
+				char idstr[256];
+				if (fread(idstr, idstr_len, 1, infp) != 1) {
+					printf("Failed to read idstr\n");
+					return -1;
+				}
+				idstr[idstr_len] = '\0';
+
+				DEBUG(1, "idstr = '%s'\n", idstr);
+
+				if (!strcmp(idstr, section_name)) {
+					write_to_file = 1;
+				} else {
+					write_to_file = 0;
+				}
 			}
-			DEBUG(2, "Writing page at address 0x%016llx (fill "
-			      "byte = 0x%02x)\n", (unsigned long long) addr,
-			      byte);
-			mem_page_fill(outfp, addr, byte);
-		} else if (flags & RAM_SAVE_FLAG_PAGE) {
-			uint8_t page[PAGE_SIZE];
-			if (fread(page, PAGE_SIZE, 1, infp) != 1) {
-				printf("Failed to read page\n");
-				return -1;
+
+			if (flags & RAM_SAVE_FLAG_COMPRESS) {
+				uint8_t byte;
+				if (get_byte(infp, &byte)) {
+					printf("Failed to read byte\n");
+					return -1;
+				}
+
+				if (write_to_file) {
+					DEBUG(2, "Writing page at address "
+					      "0x%016llx (fill byte = "
+					      "0x%02x)\n",
+					      (unsigned long long) addr, byte);
+					mem_page_fill(outfp, addr, byte);
+				}
 			}
-			DEBUG(2, "Writing page at address 0x%016llx\n",
-			      (unsigned long long) addr);
-			mem_page_write(outfp, addr, page);
+
+			if (flags & RAM_SAVE_FLAG_PAGE) {
+				uint8_t page[PAGE_SIZE];
+				if (fread(page, PAGE_SIZE, 1, infp) != 1) {
+					printf("Failed to read page\n");
+					return -1;
+				}
+
+				if (write_to_file) {
+					DEBUG(2, "Writing page at address "
+					      "0x%016llx\n",
+					      (unsigned long long) addr);
+					mem_page_write(outfp, addr, page);
+				}
+			}
 		}
 
-		if (flags & RAM_SAVE_FLAG_EOS) {
-			break;
-		}
-	}
+	} while (!(flags & RAM_SAVE_FLAG_EOS));
 
 	return 0;
 }
@@ -315,8 +407,8 @@ int add_section_info(struct section_info **sections, uint32_t id,
 	return 0;
 }
 
-int handle_section(FILE *infp, FILE *outfp, struct section_info *sections,
-		   uint32_t id, uint32_t type)
+int handle_section(FILE *infp, FILE *outfp, char *section_name,
+		   struct section_info *sections, uint32_t id, uint32_t type)
 {
 	struct section_info *secinfo = sections;
 	while (secinfo) {
@@ -335,7 +427,7 @@ int handle_section(FILE *infp, FILE *outfp, struct section_info *sections,
 			return -1;
 		}
 	} else if (!strcmp(secinfo->idstr, "ram")) {
-		if (ram_load(infp, outfp, secinfo->version)) {
+		if (ram_load(infp, outfp, section_name, secinfo->version)) {
 			return -1;
 		}
 		if (type == QEMU_VM_SECTION_END) {
@@ -360,7 +452,11 @@ int handle_section(FILE *infp, FILE *outfp, struct section_info *sections,
 
 int main(int argc, char *argv[])
 {
-	char *options = "d";
+	char *options = "dl";
+	int list = 0;
+	FILE *infp, *outfp = NULL;
+	char section_name[256];
+
 	while (1) {
 		int opt = getopt(argc, argv, options);
 		if (opt < 0) {
@@ -370,26 +466,45 @@ int main(int argc, char *argv[])
 			case 'd':
 				debug++;
 				break;
+			case 'l':
+				list = 1;
+				break;
 		}
 	}
 
-	if (argc - optind != 2) {
-		printf("Usage: %s [-d] INFILE OUTFILE\n", argv[0]);
+	if ((list && (argc - optind) != 1) ||
+	    (!list && ((argc - optind) != 3))) {
+		printf("Usage: %s [-d] INFILE OUTFILE SECTION\n"
+		       "       %s [-d] -l INFILE\n\n",
+		       argv[0], argv[0]);
+		printf("Extract SECTION from INFILE and write it to "
+		       "OUTFILE or\n");
+		printf("list available sections in INFILE\n\n");
+		printf("Options:\n");
+		printf("  -d          enable debug output\n");
+		printf("  -l INFILE   list available sections in INFILE\n\n");
+		printf("Examples:\n");
+		printf("  %s -l instance-00000d93.save\n", argv[0]);
+		printf("  %s instance-00000d93.save instance-00000d93.ram "
+		       "pc.ram\n", argv[0]);
 		return -1;
 	}
 
-	FILE *infp = fopen(argv[optind], "r");
+	infp = fopen(argv[optind], "r");
 	if (!infp) {
 		printf("Failed to open %s: %s\n", argv[optind],
 		       strerror(errno));
 		return -1;
 	}
 
-	FILE *outfp = fopen(argv[optind + 1], "wx");
-	if (!outfp) {
-		printf("Failed to open %s: %s\n", argv[optind + 1],
-		       strerror(errno));
-		return -1;
+	if (!list) {
+		outfp = fopen(argv[optind + 1], "wx");
+		if (!outfp) {
+			printf("Failed to open %s: %s\n", argv[optind + 1],
+			       strerror(errno));
+			return -1;
+		}
+		strcpy(section_name, argv[optind + 2]);
 	}
 
 	if (libvirt_check(infp)) {
@@ -457,8 +572,8 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			if (handle_section(infp, outfp, sections, section_id,
-					   section_type)) {
+			if (handle_section(infp, outfp, section_name, sections,
+					   section_id, section_type)) {
 				return -1;
 			}
 		} else if (section_type == QEMU_VM_SECTION_PART ||
@@ -470,13 +585,14 @@ int main(int argc, char *argv[])
 			}
 			DEBUG(1, "section_id = 0x%08x\n", section_id);
 
-			int r = handle_section(infp, outfp, sections,
-					       section_id, section_type);
+			int r = handle_section(infp, outfp, section_name,
+					       sections, section_id,
+					       section_type);
 			if (r < 0) {
 				return -1;
 			} else if (r > 0) {
-				printf("Handled final 'ram' section, "
-				       "conversion complete\n");
+//				printf("Handled final 'ram' section, "
+//				       "conversion complete\n");
 				break;
 			}
 		} else {

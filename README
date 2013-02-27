@@ -15,9 +15,34 @@ virtual machine in a series of sections, each section representing the state of
 a device.  For example, there is CPU state, RAM state, block device state, and
 more.
 
+Converting virtual machine dumps to raw memory files
+----------------------------------------------------
+
 The lqs2mem tool converts LQS or QEMU-savevm files into raw physical memory
 images.  It reads data from the RAM sections of an LQS or QEMU-savevm input
 file and writes it to a file in which each byte corresponds to a byte of the
 virtual machine's physical memory.  That is, reading from position x of a raw
 physical memory image is equivalent to reading from physical address x of
 memory.
+
+A typical  LQS or QEMU-savevm file contains different memory section.  The
+lqs2mem tool can be used to list the available sections and then convert the
+specified section to a raw memory file.
+
+Examples
+--------
+
+List the available sections:
+
+$ lqs2mem -l instance-00000d93.save
+section = pc.ram                           size = 512 [MB]  536870912 [Bytes]
+section = pc.bios                          size = 128 [KB]     131072 [Bytes]
+section = pc.rom                           size = 128 [KB]     131072 [Bytes]
+section = vga.vram                         size =  16 [MB]   16777216 [Bytes]
+section = 0000:00:02.0/cirrus_vga.rom      size =  64 [KB]      65536 [Bytes]
+section = 0000:00:03.0/virtio-net-pci.rom  size =  32 [KB]      32768 [Bytes]
+
+Convert the virtual machine's main memory (pc.ram section) to a raw memory
+file:
+
+$ lqs2mem instance-00000d93.save instance-00000d93.ram pc.ram
