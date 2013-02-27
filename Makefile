@@ -1,2 +1,8 @@
+BIN = lqs2mem
+
 all:
-	gcc -o lqs2mem lqs2mem.c
+	gcc -Wall -o $(BIN) $(BIN).c
+
+
+clean:
+	@rm *~ $(BIN) 2>/dev/null || true
