@@ -34,6 +34,8 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 
+#define NAME "lqs2mem"
+
 #if __BYTE_ORDER == __LITTLE_ENDIAN
 #define ntohll(x) (((x) << 56 & 0xFF00000000000000ULL) | \
                    ((x) << 40 & 0x00FF000000000000ULL) | \
@@ -313,15 +315,16 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 				int kb = (length >> 10) > 0 ? length >> 10 : 0;
 				int mb = (length >> 20) > 0 ? length >> 20 : 0;
 				printf("section = %-32s size = %5llu [%s] "
-				       "%12llu [Bytes]\n",
+				       "%12llu [bytes]\n",
 				       idstr,
 				       (unsigned long long)(mb > 0 ? mb :
 							    kb > 0 ? kb :
 							    length),
-				       mb > 0 ? "MB" : kb > 0 ? "KB" : "Bytes",
+				       mb > 0 ? "MB" : kb > 0 ? "KB" : "bytes",
 				       (unsigned long long)length);
 
-				if (!strcmp(idstr, section_name)) {
+				if (section_name &&
+				    !strcmp(idstr, section_name)) {
 					section_size = length;
 				}
 
@@ -348,7 +351,8 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 				DEBUG(1, "idstr = '%s'\n", idstr);
 
-				if (!strcmp(idstr, section_name)) {
+				if (section_name &&
+				    !strcmp(idstr, section_name)) {
 					write_to_file = 1;
 				} else {
 					write_to_file = 0;
@@ -459,12 +463,29 @@ int handle_section(FILE *infp, FILE *outfp, char *section_name,
 	return 0;
 }
 
+void usage(void)
+{
+	printf("Usage: %s [-d] -l INFILE\n"
+	       "       %s [-d] -w SECTION INFILE OUTFILE\n\n", NAME, NAME);
+	printf("List available sections in INFILE or extract SECTION from "
+	       "INFILE and write it\nto OUTFILE\n\n");
+	printf("Options:\n");
+	printf("  -d          enable debug output\n");
+	printf("  -l          list available sections in INFILE\n");
+	printf("  -w SECTION  extract SECTION from INFILE and write it to "
+	       "OUTFILE\n\n");
+	printf("Examples:\n");
+	printf("  %s -l instance-00000d93.save\n", NAME);
+	printf("  %s -w pc.ram instance-00000d93.save instance-00000d93.ram\n",
+	       NAME);
+}
+
 int main(int argc, char *argv[])
 {
-	char *options = "dl";
+	char *options = "dlw:";
 	int list = 0;
 	FILE *infp, *outfp = NULL;
-	char section_name[256];
+	char *section_name = NULL;
 
 	while (1) {
 		int opt = getopt(argc, argv, options);
@@ -472,30 +493,26 @@ int main(int argc, char *argv[])
 			break;
 		}
 		switch (opt) {
-			case 'd':
-				debug++;
-				break;
-			case 'l':
-				list = 1;
-				break;
+		case 'd':
+			debug++;
+			break;
+		case 'l':
+			list = 1;
+			break;
+		case 'w':
+			section_name = optarg;
+			break;
+		default:
+			usage();
+			return -1;
 		}
 	}
 
-	if ((list && (argc - optind) != 1) ||
-	    (!list && ((argc - optind) != 3))) {
-		printf("Usage: %s [-d] INFILE OUTFILE SECTION\n"
-		       "       %s [-d] -l INFILE\n\n",
-		       argv[0], argv[0]);
-		printf("Extract SECTION from INFILE and write it to "
-		       "OUTFILE or\n");
-		printf("list available sections in INFILE\n\n");
-		printf("Options:\n");
-		printf("  -d          enable debug output\n");
-		printf("  -l INFILE   list available sections in INFILE\n\n");
-		printf("Examples:\n");
-		printf("  %s -l instance-00000d93.save\n", argv[0]);
-		printf("  %s instance-00000d93.save instance-00000d93.ram "
-		       "pc.ram\n", argv[0]);
+	if ((list && section_name) ||
+	    (!list && !section_name) ||
+	    (list && (argc - optind) != 1) ||
+	    (section_name && (argc - optind) != 2)) {
+		usage();
 		return -1;
 	}
 
@@ -506,14 +523,13 @@ int main(int argc, char *argv[])
 		return -1;
 	}
 
-	if (!list) {
+	if (section_name) {
 		outfp = fopen(argv[optind + 1], "wx");
 		if (!outfp) {
 			printf("Failed to open %s: %s\n", argv[optind + 1],
 			       strerror(errno));
 			return -1;
 		}
-		strcpy(section_name, argv[optind + 2]);
 	}
 
 	if (libvirt_check(infp)) {
@@ -611,14 +627,15 @@ int main(int argc, char *argv[])
 		section_count++;
 	}
 
-	if (file_size || section_size) {
+	if (section_name) {
 		if (file_size != section_size) {
-			printf("Error: Wrote %llu Bytes to file %s instead "
-			       "of %llu Bytes\n", file_size, argv[optind + 1],
-			       section_size);
+			printf("Error: Wrote %llu bytes from section '%s' to "
+			       "file %s (expected %llu bytes)\n", file_size,
+			       section_name, argv[optind + 1], section_size);
 			return -1;
 		} else {
-			printf("Wrote %llu Bytes to file %s\n", file_size,
+			printf("Wrote %llu bytes from section '%s' to file "
+			       "%s\n", file_size, section_name,
 			       argv[optind + 1]);
 		}
 	}

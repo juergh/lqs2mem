@@ -42,7 +42,14 @@ section = vga.vram                         size =  16 [MB]   16777216 [Bytes]
 section = 0000:00:02.0/cirrus_vga.rom      size =  64 [KB]      65536 [Bytes]
 section = 0000:00:03.0/virtio-net-pci.rom  size =  32 [KB]      32768 [Bytes]
 
-Convert the virtual machine's main memory (pc.ram section) to a raw memory
+Write the virtual machine's main memory (pc.ram section) to a raw memory
 file:
 
-$ lqs2mem instance-00000d93.save instance-00000d93.ram pc.ram
+$ lqs2mem -w pc.ram instance-00000d93.save instance-00000d93.ram
+section = pc.ram                           size = 512 [MB]  536870912 [Bytes]
+section = pc.bios                          size = 128 [KB]     131072 [Bytes]
+section = pc.rom                           size = 128 [KB]     131072 [Bytes]
+section = vga.vram                         size =  16 [MB]   16777216 [Bytes]
+section = 0000:00:02.0/cirrus_vga.rom      size =  64 [KB]      65536 [Bytes]
+section = 0000:00:03.0/virtio-net-pci.rom  size =  32 [KB]      32768 [Bytes]
+Wrote 536870912 bytes from section 'pc.ram' to file instance-00000d93.ram
