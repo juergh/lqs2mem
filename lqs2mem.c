@@ -107,8 +107,8 @@ struct qemud_save_header {
 #define DEBUG(d,...) { if (debug >= d) printf(__VA_ARGS__); }
 static int debug = 0;
 
-int section_size = 0;
-int file_size = 0;
+unsigned long long section_size = 0;
+unsigned long long file_size = 0;
 
 struct section_info {
 	uint32_t id;
@@ -614,14 +614,11 @@ int main(int argc, char *argv[])
 	if (file_size || section_size) {
 		if (file_size != section_size) {
 			printf("Error: Wrote %llu Bytes to file %s instead "
-			       "of %llu Bytes\n",
-			       (unsigned long long)file_size,
-			       argv[optind + 1],
-			       (unsigned long long)section_size);
+			       "of %llu Bytes\n", file_size, argv[optind + 1],
+			       section_size);
 			return -1;
 		} else {
-			printf("Wrote %llu Bytes to file %s\n",
-			       (unsigned long long)file_size,
+			printf("Wrote %llu Bytes to file %s\n", file_size,
 			       argv[optind + 1]);
 		}
 	}
