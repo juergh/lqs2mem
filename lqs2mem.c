@@ -95,6 +95,15 @@ struct qemud_save_header {
 #define QEMU_VM_SECTION_FULL         0x04
 #define QEMU_VM_SUBSECTION           0x05
 
+const char *section_type_name[] = {
+	"EOF",
+	"SECTION_START",
+	"SECTION_PART",
+	"SECTION_END",
+	"SECTION_FULL",
+	"SUBSECTION"
+};
+
 /* From qemu arch-init.c */
 
 #define RAM_SAVE_FLAG_FULL      0x01 /* Obsolete, not used anymore */
@@ -226,10 +235,14 @@ int block_load(FILE *f)
 		printf("Failed to read from 'block' section\n");
 		return -1;
 	}
+
+	DEBUG(2, "block: flags    : 0x%016lx\n", x);
+
 	if (x != BLK_MIG_FLAG_EOS) {
 		printf("Unsupported non-empty 'block' section\n");
 		return -1;
 	}
+
 
 	return 0;
 }
@@ -277,6 +290,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 	int kb, mb;
 	uint8_t byte;
 	uint8_t page[PAGE_SIZE];
+	uint64_t offset;
 
 	if (version_id != 4) {
 		printf("Unsupported 'ram' section version %d\n", version_id);
@@ -292,15 +306,15 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 		flags = addr & ~PAGE_MASK;
 		addr &= PAGE_MASK;
 
-		DEBUG(2, "ram: flags   : 0x%016lx\n", flags);
-		DEBUG(2, "ram: addr    : 0x%016lx\n", addr);
+		DEBUG(2, "ram: flags      : 0x%016lx\n", flags);
+		DEBUG(2, "ram: addr       : 0x%016lx\n", addr);
 
 		if (flags & RAM_SAVE_FLAG_MEM_SIZE) {
 			total_ram_bytes = addr;
 
-			DEBUG(3, "ram: Total data size = 0x%016llx (%llu MB)\n",
-			       (unsigned long long) addr,
-			       (unsigned long long) addr / (1<<20));
+			DEBUG(3, "ram: total_size : %llu (%llu MB)\n",
+			      (unsigned long long) addr,
+			      (unsigned long long) addr / (1<<20));
 
 			while (total_ram_bytes) {
 
@@ -358,7 +372,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 				}
 				idstr[idstr_len] = '\0';
 
-				DEBUG(3, "ram: idstr = '%s'\n", idstr);
+				DEBUG(3, "ram: idstr      : %s\n", idstr);
 
 				if (section_name &&
 				    !strcmp(idstr, section_name)) {
@@ -370,17 +384,19 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 			if (flags & RAM_SAVE_FLAG_COMPRESS) {
 
-				DEBUG(3, "ram: Reading fill byte from "
-				      "offset 0x%016llx\n",
-				      (unsigned long long)ftell(infp));
+				offset = ftell(infp);
 
 				if (get_byte(infp, &byte)) {
 					printf("Failed to fill read byte\n");
 					return -1;
 				}
 
+				DEBUG(4, "ram: fill_byte  : 0x%02x "
+				      "(read from file position 0x%016llx)\n",
+				      byte, (unsigned long long)offset);
+
 				if (write_to_file) {
-					DEBUG(3, "ram: Writing page at "
+					DEBUG(4, "ram: Writing page at "
 					      "address 0x%016llx (fill byte = "
 					      "0x%02x)\n",
 					      (unsigned long long) addr, byte);
@@ -391,17 +407,19 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 			if (flags & RAM_SAVE_FLAG_PAGE) {
 
-				DEBUG(3, "ram: Reading page from offset "
-				      "0x%016llx\n",
-				      (unsigned long long)ftell(infp));
+				offset = ftell(infp);
 
 				if (fread(page, PAGE_SIZE, 1, infp) != 1) {
 					printf("Failed to read page\n");
 					return -1;
 				}
 
+				DEBUG(4, "ram: page[0]    : 0x%02x "
+				      "(read from file position 0x%016llx)\n",
+				      page[0], (unsigned long long)offset);
+
 				if (write_to_file) {
-					DEBUG(3, "ram: Writing page at "
+					DEBUG(4, "ram: Writing page at "
 					      "address 0x%016llx\n",
 					      (unsigned long long) addr);
 					mem_page_write(outfp, addr, page);
@@ -438,8 +456,8 @@ int section_add_info(struct section_info **sections, uint32_t id, char *idstr,
 	return 0;
 }
 
-int section_handle(FILE *infp, FILE *outfp, char *section_name,
-		   struct section_info *sections, uint32_t id)
+struct section_info *section_get_info(struct section_info *sections,
+				      uint32_t id)
 {
 	struct section_info *secinfo = sections;
 
@@ -449,6 +467,15 @@ int section_handle(FILE *infp, FILE *outfp, char *section_name,
 		}
 		secinfo = secinfo->next;
 	}
+	return secinfo;
+}
+
+int section_handle(FILE *infp, FILE *outfp, char *section_name,
+		   struct section_info *sections, uint32_t id)
+{
+	struct section_info *secinfo;
+
+	secinfo = section_get_info(sections, id);
 	if (!secinfo) {
 		printf("No matching section with section_id = %d\n", id);
 		return -1;
@@ -495,6 +522,7 @@ int main(int argc, char *argv[])
 	char *section_name = NULL;
 	int section_count = 0;
 	struct section_info *sections = NULL;
+	struct section_info *secinfo;
 	uint64_t offset;
 	uint8_t section_type;
 	uint32_t section_id;
@@ -569,9 +597,10 @@ int main(int argc, char *argv[])
 			return -1;
 		}
 		DEBUG(1, "\nSection %d\n", section_count)
-		DEBUG(1, "offset       : 0x%016llx\n",
+		DEBUG(1, "offset          : 0x%016llx\n",
 		      (unsigned long long) offset);
-		DEBUG(1, "section_type : %d\n", section_type);
+		DEBUG(1, "section_type    : %d (%s)\n", section_type,
+		      section_type_name[section_type]);
 
 		if (section_type == QEMU_VM_EOF) {
 			break;
@@ -608,10 +637,10 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			DEBUG(1, "section_id   : %u\n", section_id);
-			DEBUG(1, "idstr        : %s\n", idstr);
-			DEBUG(1, "instance_id  : 0x%08x\n", instance_id);
-			DEBUG(1, "version      : %u\n", version_id);
+			DEBUG(1, "section_id      : %u\n", section_id);
+			DEBUG(1, "idstr           : %s\n", idstr);
+			DEBUG(1, "instance_id     : 0x%08x\n", instance_id);
+			DEBUG(1, "version         : %u\n", version_id);
 
 			/* Add the section info to our section list. We need
 			 * this to be able to process sections of type
@@ -631,7 +660,11 @@ int main(int argc, char *argv[])
 				return -1;
 			}
 
-			DEBUG(1, "section_id   : %u\n", section_id);
+			/* Find the section info in our list so we can print
+			* its name */
+			secinfo = section_get_info(sections, section_id);
+			DEBUG(1, "section_id      : %u (%s)\n", section_id,
+			      secinfo ? secinfo->idstr : "NULL");
 
 		} else {
 			printf("Invalid section type: %d\n", section_type);
@@ -648,15 +681,9 @@ int main(int argc, char *argv[])
 		 * so short-cycle the processing of the file if we're done with
 		 * them */
 		if (section_type == QEMU_VM_SECTION_END) {
-			struct section_info *secinfo = sections;
-			while (secinfo) {
-				if (secinfo->id == section_id) {
-					if (!strcmp(secinfo->idstr, "ram")) {
-						done = 1;
-					}
-					break;
-				}
-				secinfo = secinfo->next;
+			secinfo = section_get_info(sections, section_id);
+			if (secinfo && !strcmp(secinfo->idstr, "ram")) {
+				done = 1;
 			}
 		}
 
