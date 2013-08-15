@@ -253,6 +253,12 @@ int block_load(FILE *f)
 
 int mem_page_write(FILE *f, uint64_t addr, uint8_t *page)
 {
+	/* Account for the 512 MB 'hole' from 3.5 GB to 4 GB for the memory
+	 * mapped PCI devices */
+	if (addr >= 0xe0000000) {
+		addr += 0x20000000;
+	}
+
 	if (fseek(f, addr, SEEK_SET)) {
 		printf("Failed to seek to address 0x%016llx in output file\n",
 				(unsigned long long) addr);
