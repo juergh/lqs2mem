@@ -115,8 +115,15 @@ const char *section_type_name[] = {
 
 /****************************************************************************/
 
-int debug = 0;
-#define DEBUG(d,...) { if (debug >= d) printf(__VA_ARGS__); }
+#define DEFAULT         (1 << 0)
+#define VERBOSE         (1 << 1)
+#define SECTION_INFO    (1 << 2)
+#define SECTION_DETAILS (1 << 3)
+#define SECTION_DATA    (1 << 4)
+#define READ_DETAILS    (1 << 5)
+
+int debug = DEFAULT;
+#define DEBUG(d, ...) { if (debug & d) printf(__VA_ARGS__); }
 
 uint64_t section_size = 0;
 uint64_t file_size = 0;
@@ -128,26 +135,49 @@ struct section_info {
 	struct section_info *next;
 };
 
-int get_byte(FILE *f, uint8_t *x)
+size_t _fread(void *ptr, size_t size, size_t nmemb, FILE *stream, char *desc)
 {
-	if (fread(x, sizeof(*x), 1, f) != 1) {
+	size_t num_membs;
+	size_t num_bytes, i;
+
+	DEBUG(READ_DETAILS, "%016lx   %4lx   ", ftell(stream),
+	      (uint64_t)(size * nmemb));
+
+	num_membs = fread(ptr, size, nmemb, stream);
+	num_bytes = num_membs * size;
+	for (i = 0; i < 16; i++) {
+		if (i < num_bytes) {
+			DEBUG(READ_DETAILS, "%02x ",
+			      (unsigned char)((unsigned char*)ptr)[i]);
+		} else {
+			DEBUG(READ_DETAILS, "   ");
+		}
+	}
+	DEBUG(READ_DETAILS, "  # %s\n", desc);
+
+	return num_membs;
+}
+
+int get_byte(FILE *f, uint8_t *x, char *desc)
+{
+	if (_fread(x, sizeof(*x), 1, f, desc) != 1) {
 		return -1;
 	}
 	return 0;
 }
 
-int get_be32(FILE *f, uint32_t *x)
+int get_be32(FILE *f, uint32_t *x, char *desc)
 {
-	if (fread(x, sizeof(*x), 1, f) != 1) {
+	if (_fread(x, sizeof(*x), 1, f, desc) != 1) {
 		return -1;
 	}
 	*x = ntohl(*x);
 	return 0;
 }
 
-int get_be64(FILE *f, uint64_t *x)
+int get_be64(FILE *f, uint64_t *x, char *desc)
 {
-	if (fread(x, sizeof(*x), 1, f) != 1) {
+	if (_fread(x, sizeof(*x), 1, f, desc) != 1) {
 		return -1;
 	}
 	*x = ntohll(*x);
@@ -158,21 +188,21 @@ int libvirt_check(FILE *f)
 {
 	struct qemud_save_header hdr;
 
-	DEBUG(1, "Checking for Libvirt-QEMU-save magic...\n");
+	DEBUG(VERBOSE, "Checking for Libvirt-QEMU-save magic...\n");
 
-	if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
+	if (_fread(&hdr, sizeof(hdr), 1, f, "libvirt-qemu-save-magic") != 1) {
 		printf("Failed to read Libvirt-QEMU-save header: %s\n",
 		       strerror(errno));
 		return -1;
 	}
 
 	if (memcmp(hdr.magic, QEMUD_SAVE_MAGIC, sizeof(hdr.magic))) {
-		printf("Invalid Libvirt-QEMU-save magic\n");
+		DEBUG(VERBOSE, "Invalid Libvirt-QEMU-save magic\n");
 		return -1;
 	}
-	DEBUG(1, "Found Libvirt-QEMU-save magic\n");
+	DEBUG(VERBOSE, "Found Libvirt-QEMU-save magic\n");
 
-	DEBUG(1, "Libvirt-QEMU-save version = %d\n", hdr.version);
+	DEBUG(VERBOSE, "Libvirt-QEMU-save version = %d\n", hdr.version);
 	if (hdr.version != QEMUD_SAVE_VERSION) {
 		printf("Unsupported Libvirt-QEMU-save version\n");
 		return -1;
@@ -192,9 +222,9 @@ int qemu_check(FILE *f)
 {
 	uint32_t magic, version;
 
-	DEBUG(1, "Checking for QEMU-savevm magic...\n");
+	DEBUG(VERBOSE, "Checking for QEMU-savevm magic...\n");
 
-	if (get_be32(f, &magic)) {
+	if (get_be32(f, &magic, "qemu-savevm-magic")) {
 		printf("Failed to read QEMU-savevm magic\n");
 		return -1;
 	}
@@ -203,14 +233,14 @@ int qemu_check(FILE *f)
 		printf("Invalid QEMU-savevm magic\n");
 		return -1;
 	}
-	DEBUG(1, "Found QEMU-savevm magic\n");
+	DEBUG(VERBOSE, "Found QEMU-savevm magic\n");
 
-	if (get_be32(f, &version)) {
+	if (get_be32(f, &version, "qemu-savevm-version")) {
 		printf("Failed to read QEMU-savevm version\n");
 		return -1;
 	}
 
-	DEBUG(1, "QEMU-savevm version = %u\n", version);
+	DEBUG(VERBOSE, "QEMU-savevm version = %u\n", version);
 	if (version != QEMU_VM_FILE_VERSION) {
 		printf("Unsupported QEMU-savevm version\n");
 		return -1;
@@ -231,12 +261,12 @@ int block_load(FILE *f)
 	 * empty one.
 	 */
 
-	if (get_be64(f, &x)) {
+	if (get_be64(f, &x, "flag (block)")) {
 		printf("Failed to read from 'block' section\n");
 		return -1;
 	}
 
-	DEBUG(2, "block: flags    : 0x%016lx\n", x);
+	DEBUG(SECTION_DETAILS, "block: flags    : 0x%016lx\n", x);
 
 	if (x != BLK_MIG_FLAG_EOS) {
 		printf("Unsupported non-empty 'block' section\n");
@@ -304,7 +334,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 	}
 
 	do {
-		if (get_be64(infp, &addr)) {
+		if (get_be64(infp, &addr, "addr (ram)")) {
 			printf("Failed to read address\n");
 			return -1;
 		}
@@ -312,45 +342,47 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 		flags = addr & ~PAGE_MASK;
 		addr &= PAGE_MASK;
 
-		DEBUG(2, "ram: flags      : 0x%016lx\n", flags);
-		DEBUG(2, "ram: addr       : 0x%016lx\n", addr);
+		DEBUG(SECTION_DETAILS, "ram: flags      : 0x%016lx\n", flags);
+		DEBUG(SECTION_DETAILS, "ram: addr       : 0x%016lx\n", addr);
 
 		if (flags & RAM_SAVE_FLAG_MEM_SIZE) {
 			total_ram_bytes = addr;
 
-			DEBUG(3, "ram: total_size : %llu (%llu MB)\n",
-			      (unsigned long long) addr,
+			DEBUG(SECTION_DATA, "ram: total_size : %llu "
+			      "(%llu MB)\n", (unsigned long long) addr,
 			      (unsigned long long) addr / (1<<20));
 
 			while (total_ram_bytes) {
 
-				if (get_byte(infp, &idstr_len)) {
+				if (get_byte(infp, &idstr_len,
+					     "idstr-len (ram)")) {
 					printf("Failed to read id string "
 					       "len\n");
 					return -1;
 				}
 
-				if (fread(idstr, idstr_len, 1, infp) != 1) {
+				if (_fread(idstr, idstr_len, 1, infp,
+					   "idstr (ram)") != 1) {
 					printf("Failed to read idstr\n");
 					return -1;
 				}
 				idstr[idstr_len] = '\0';
 
-				if (get_be64(infp, &length)) {
+				if (get_be64(infp, &length,
+					     "section-len (ram)")) {
 					printf("Failed to read length\n");
 					return -1;
 				}
 
 				kb = (length >> 10) > 0 ? length >> 10 : 0;
 				mb = (length >> 20) > 0 ? length >> 20 : 0;
-				printf("section = %-32s size = %5llu [%s] "
-				       "%12llu [bytes]\n",
-				       idstr,
-				       (unsigned long long)(mb > 0 ? mb :
-							    kb > 0 ? kb :
-							    length),
-				       mb > 0 ? "MB" : kb > 0 ? "KB" : "bytes",
-				       (unsigned long long)length);
+				DEBUG(DEFAULT, "section = %-32s size = %5llu "
+				      "[%s] %12llu [bytes]\n", idstr,
+				      (unsigned long long)(mb > 0 ? mb :
+							   kb > 0 ? kb :
+							   length),
+				      mb > 0 ? "MB" : kb > 0 ? "KB" : "bytes",
+				      (unsigned long long)length);
 
 				if (section_name &&
 				    !strcmp(idstr, section_name)) {
@@ -366,19 +398,22 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 			if (!(flags & RAM_SAVE_FLAG_CONTINUE)) {
 
-				if (get_byte(infp, &idstr_len)) {
+				if (get_byte(infp, &idstr_len,
+					     "idstr-len (ram)")) {
 					printf("Failed to read id string "
 					       "len\n");
 					return -1;
 				}
 
-				if (fread(idstr, idstr_len, 1, infp) != 1) {
+				if (_fread(idstr, idstr_len, 1, infp,
+					   "idstr (ram)") != 1) {
 					printf("Failed to read idstr\n");
 					return -1;
 				}
 				idstr[idstr_len] = '\0';
 
-				DEBUG(3, "ram: idstr      : %s\n", idstr);
+				DEBUG(SECTION_DATA, "ram: idstr      : %s\n",
+				      idstr);
 
 				if (section_name &&
 				    !strcmp(idstr, section_name)) {
@@ -392,19 +427,19 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 				offset = ftell(infp);
 
-				if (get_byte(infp, &byte)) {
+				if (get_byte(infp, &byte, "fill-byte (ram)")) {
 					printf("Failed to fill read byte\n");
 					return -1;
 				}
 
-				DEBUG(4, "ram: fill_byte  : 0x%02x "
+				DEBUG(SECTION_DATA, "ram: fill_byte  : 0x%02x "
 				      "(read from file position 0x%016llx)\n",
 				      byte, (unsigned long long)offset);
 
 				if (write_to_file) {
-					DEBUG(4, "ram: Writing page at "
-					      "address 0x%016llx (fill byte = "
-					      "0x%02x)\n",
+					DEBUG(SECTION_DATA, "ram: Writing "
+					      "page at address 0x%016llx "
+					      "(fill byte = 0x%02x)\n",
 					      (unsigned long long) addr, byte);
 					mem_page_fill(outfp, addr, byte);
 					file_size += PAGE_SIZE;
@@ -415,18 +450,19 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 				offset = ftell(infp);
 
-				if (fread(page, PAGE_SIZE, 1, infp) != 1) {
+				if (_fread(page, PAGE_SIZE, 1, infp,
+					   "data (ram)") != 1) {
 					printf("Failed to read page\n");
 					return -1;
 				}
 
-				DEBUG(4, "ram: page[0]    : 0x%02x "
+				DEBUG(SECTION_DATA, "ram: page[0]    : 0x%02x "
 				      "(read from file position 0x%016llx)\n",
 				      page[0], (unsigned long long)offset);
 
 				if (write_to_file) {
-					DEBUG(4, "ram: Writing page at "
-					      "address 0x%016llx\n",
+					DEBUG(SECTION_DATA, "ram: Writing "
+					      "page at address 0x%016llx\n",
 					      (unsigned long long) addr);
 					mem_page_write(outfp, addr, page);
 					file_size += PAGE_SIZE;
@@ -505,12 +541,13 @@ int section_handle(FILE *infp, FILE *outfp, char *section_name,
 
 void usage(void)
 {
-	printf("Usage: %s [-d] -l INFILE\n"
-	       "       %s [-d] -w SECTION INFILE OUTFILE\n\n", NAME, NAME);
+	printf("Usage: %s [-d MASK] -l INFILE\n"
+	       "       %s [-d MASK] -w SECTION INFILE OUTFILE\n\n", NAME,
+	       NAME);
 	printf("List available sections in INFILE or extract SECTION from "
 	       "INFILE and write it\nto OUTFILE\n\n");
 	printf("Options:\n");
-	printf("  -d          enable debug output\n");
+	printf("  -d MASK     enable debug output\n");
 	printf("  -l          list available sections in INFILE\n");
 	printf("  -w SECTION  extract SECTION from INFILE and write it to "
 	       "OUTFILE\n\n");
@@ -539,13 +576,13 @@ int main(int argc, char *argv[])
 	int done;
 
 	while (1) {
-		opt = getopt(argc, argv, "dlw:");
+		opt = getopt(argc, argv, "d:lw:");
 		if (opt < 0) {
 			break;
 		}
 		switch (opt) {
 		case 'd':
-			debug++;
+			debug = atoi(optarg);
 			break;
 		case 'l':
 			list = 1;
@@ -583,6 +620,11 @@ int main(int argc, char *argv[])
 		}
 	}
 
+	DEBUG(READ_DETAILS, "%-16s   %-4s   %-47s   %s\n", "Read offset",
+	      "Size", "Data[0:15]", "Description");
+	DEBUG(READ_DETAILS, "--------------------------------------------");
+	DEBUG(READ_DETAILS, "-------------------------------------------\n");
+
 	/* Check for libvirt-qemu-save header */
 	if (libvirt_check(infp) < 0) {
 		rewind(infp);
@@ -598,14 +640,14 @@ int main(int argc, char *argv[])
 	while (!done) {
 		offset = ftell(infp);
 
-		if (get_byte(infp, &section_type)) {
+		if (get_byte(infp, &section_type, "section-type")) {
 			printf("Failed to read section type\n");
 			return -1;
 		}
-		DEBUG(1, "\nSection %d\n", section_count)
-		DEBUG(1, "offset          : 0x%016llx\n",
+		DEBUG(SECTION_INFO, "\nSection %d\n", section_count);
+		DEBUG(SECTION_INFO, "offset          : 0x%016llx\n",
 		      (unsigned long long) offset);
-		DEBUG(1, "section_type    : %d (%s)\n", section_type,
+		DEBUG(SECTION_INFO, "section_type    : %d (%s)\n", section_type,
 		      section_type_name[section_type]);
 
 		if (section_type == QEMU_VM_EOF) {
@@ -617,36 +659,40 @@ int main(int argc, char *argv[])
 
 			/* Read the section info/header */
 
-			if (get_be32(infp, &section_id)) {
+			if (get_be32(infp, &section_id, "section-id")) {
 				printf("Failed to read section id\n");
 				return -1;
 			}
 
-			if (get_byte(infp, &idstr_len)) {
+			if (get_byte(infp, &idstr_len, "idstr-len")) {
 				printf("Failed to read id string len\n");
 				return -1;
 			}
 
-			if (fread(idstr, idstr_len, 1, infp) != 1) {
+			if (_fread(idstr, idstr_len, 1, infp, "idstr") != 1) {
 				printf("Failed to read idstr\n");
 				return -1;
 			}
 			idstr[idstr_len] = '\0';
 
-			if (get_be32(infp, &instance_id)) {
+			if (get_be32(infp, &instance_id, "instance-id")) {
 				printf("Failed to read instance id\n");
 				return -1;
 			}
 
-			if (get_be32(infp, &version_id)) {
+			if (get_be32(infp, &version_id, "version-id")) {
 				printf("Failed to read version id\n");
 				return -1;
 			}
 
-			DEBUG(1, "section_id      : %u\n", section_id);
-			DEBUG(1, "idstr           : %s\n", idstr);
-			DEBUG(1, "instance_id     : 0x%08x\n", instance_id);
-			DEBUG(1, "version         : %u\n", version_id);
+			DEBUG(SECTION_INFO, "section_id      : %u\n",
+			      section_id);
+			DEBUG(SECTION_INFO, "idstr           : %s\n",
+			      idstr);
+			DEBUG(SECTION_INFO, "instance_id     : 0x%08x\n",
+			      instance_id);
+			DEBUG(SECTION_INFO, "version         : %u\n",
+			      version_id);
 
 			/* Add the section info to our section list. We need
 			 * this to be able to process sections of type
@@ -661,7 +707,7 @@ int main(int argc, char *argv[])
 
 			/* Read the section info/header */
 
-			if (get_be32(infp, &section_id)) {
+			if (get_be32(infp, &section_id, "section-id")) {
 				printf("Failed to read section id\n");
 				return -1;
 			}
@@ -669,8 +715,8 @@ int main(int argc, char *argv[])
 			/* Find the section info in our list so we can print
 			* its name */
 			secinfo = section_get_info(sections, section_id);
-			DEBUG(1, "section_id      : %u (%s)\n", section_id,
-			      secinfo ? secinfo->idstr : "NULL");
+			DEBUG(SECTION_INFO, "section_id      : %u (%s)\n",
+			      section_id, secinfo ? secinfo->idstr : "NULL");
 
 		} else {
 			printf("Invalid section type: %d\n", section_type);
