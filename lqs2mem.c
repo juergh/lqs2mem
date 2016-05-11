@@ -2,11 +2,12 @@
  * lqs2mem.c - convert libvirt save files or qemu savevm dumps into raw
  *             physical memory images
  *
+ * Copyright (C) 2016 Hewlett Packard Enterprise Development, L.P.
  * Copyright (C) 2011-2013 Raytheon Pikewerks Corporation. All rights reserved.
  * Copyright (C) 2013 Hewlett-Packard Development Company, L.P. 
  *
  * Authors: Andrew Tappert <andrew@pikewerks.com>
- *          Juerg Haefliger <juerg.haefliger@hp.com>
+ *          Juerg Haefliger <juerg.haefliger@hpe.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
