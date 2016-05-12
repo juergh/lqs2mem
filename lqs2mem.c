@@ -86,6 +86,8 @@ struct qemud_save_header {
  * reference the corresponding QEMU savevm/vmstate load function.
  */
 
+/* From include/migration/migration.h */
+
 #define QEMU_VM_FILE_MAGIC           0x5145564d
 #define QEMU_VM_FILE_VERSION_COMPAT  0x00000002
 #define QEMU_VM_FILE_VERSION         0x00000003
@@ -95,6 +97,10 @@ struct qemud_save_header {
 #define QEMU_VM_SECTION_END          0x03
 #define QEMU_VM_SECTION_FULL         0x04
 #define QEMU_VM_SUBSECTION           0x05
+#define QEMU_VM_VMDESCRIPTION        0x06
+#define QEMU_VM_CONFIGURATION        0x07
+#define QEMU_VM_COMMAND              0x08
+#define QEMU_VM_SECTION_FOOTER       0x7e
 
 const char *section_type_name[] = {
 	"EOF",
@@ -102,10 +108,14 @@ const char *section_type_name[] = {
 	"SECTION_PART",
 	"SECTION_END",
 	"SECTION_FULL",
-	"SUBSECTION"
+	"SUBSECTION",
+	"VMDESCRIPTION",
+	"CONFIGURATION",
+	"COMMAND",
+	"SECTION_FOOTER",
 };
 
-/* From qemu arch-init.c */
+/* From migration/ram.c */
 
 #define RAM_SAVE_FLAG_FULL      0x01 /* Obsolete, not used anymore */
 #define RAM_SAVE_FLAG_COMPRESS  0x02
@@ -113,6 +123,9 @@ const char *section_type_name[] = {
 #define RAM_SAVE_FLAG_PAGE      0x08
 #define RAM_SAVE_FLAG_EOS       0x10
 #define RAM_SAVE_FLAG_CONTINUE  0x20
+#define RAM_SAVE_FLAG_XBZRLE    0x40
+/* 0x80 is reserved in migration.h start with 0x100 next */
+#define RAM_SAVE_FLAG_COMPRESS_PAGE    0x100
 
 /****************************************************************************/
 
