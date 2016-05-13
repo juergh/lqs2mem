@@ -78,12 +78,13 @@ struct qemud_save_header {
 };
 
 /*
- * The following come from qemu-kvm's savevm.c (v0.14.0).  The logic
- * for conversion of a QEMU savevm file into a raw physical memory image is
- * based on function qemu_loadvm_state in same qemu-kvm file.  Each kind of
- * section has a different handler function; save/load functions are scattered
- * through the QEMU code base.  Comments in our section handler functions
- * reference the corresponding QEMU savevm/vmstate load function.
+ * QEMU defines and structs (v2.6.0)
+ *
+ * The conversion of a QEMU savevm file into a raw physical memory image is
+ * based on function qemu_loadvm_state in migartion/savevm.c. Each section has
+ * a different handler function; save/load functions are scattered
+ * throughout the QEMU code base. Comments in our section handler functions
+ * reference the corresponding QEMU savevm/vmstate load functions.
  */
 
 /* From include/migration/migration.h */
@@ -172,30 +173,50 @@ size_t _fread(void *ptr, size_t size, size_t nmemb, FILE *stream, char *desc)
 	return num_membs;
 }
 
-int get_byte(FILE *f, uint8_t *x, char *desc)
+/* From migration/qemu-file.c */
+
+void qemu_file_skip(FILE *f, int size)
 {
-	if (_fread(x, sizeof(*x), 1, f, desc) != 1) {
-		return -1;
-	}
-	return 0;
+	fseek(f, size, SEEK_CUR);
 }
 
-int get_be32(FILE *f, uint32_t *x, char *desc)
+int qemu_peek_byte(FILE *f, int offset)
 {
-	if (_fread(x, sizeof(*x), 1, f, desc) != 1) {
-		return -1;
-	}
-	*x = ntohl(*x);
-	return 0;
+	int val;
+
+	fseek(f, offset, SEEK_CUR);
+	fread(&val, 1, 1, f);
+	fseek(f, -(offset + 1), SEEK_CUR);
+	return val;
 }
 
-int get_be64(FILE *f, uint64_t *x, char *desc)
+int qemu_get_byte(FILE *f)
 {
-	if (_fread(x, sizeof(*x), 1, f, desc) != 1) {
-		return -1;
-	}
-	*x = ntohll(*x);
-	return 0;
+	int result;
+
+	result = qemu_peek_byte(f, 0);
+	qemu_file_skip(f, 1);
+	return result;
+}
+
+unsigned int qemu_get_be32(FILE *f)
+{
+	unsigned int v;
+
+	v = (unsigned int)qemu_get_byte(f) << 24;
+	v |= qemu_get_byte(f) << 16;
+	v |= qemu_get_byte(f) << 8;
+	v |= qemu_get_byte(f);
+	return v;
+}
+
+uint64_t qemu_get_be64(FILE *f)
+{
+	uint64_t v;
+
+	v = (uint64_t)qemu_get_be32(f) << 32;
+	v |= qemu_get_be32(f);
+	return v;
 }
 
 int libvirt_check(FILE *f)
@@ -234,30 +255,22 @@ int libvirt_check(FILE *f)
 
 int qemu_check(FILE *f)
 {
-	uint32_t magic, version;
+	uint32_t v;
 
 	DEBUG(VERBOSE, "Checking for QEMU-savevm magic...\n");
 
-	if (get_be32(f, &magic, "qemu-savevm-magic")) {
-		printf("Failed to read QEMU-savevm magic\n");
-		return -1;
-	}
-
-	if (magic != QEMU_VM_FILE_MAGIC) {
+	v = qemu_get_be32(f);
+	DEBUG(VERBOSE, "QEMU-savevm magic = %08x\n", v);
+	if (v != QEMU_VM_FILE_MAGIC) {
 		printf("Invalid QEMU-savevm magic\n");
-		return -1;
-	}
-	DEBUG(VERBOSE, "Found QEMU-savevm magic\n");
-
-	if (get_be32(f, &version, "qemu-savevm-version")) {
-		printf("Failed to read QEMU-savevm version\n");
-		return -1;
+		return -EINVAL;
 	}
 
-	DEBUG(VERBOSE, "QEMU-savevm version = %u\n", version);
-	if (version != QEMU_VM_FILE_VERSION) {
+	v = qemu_get_be32(f);
+	DEBUG(VERBOSE, "QEMU-savevm version = %u\n", v);
+	if (v != QEMU_VM_FILE_VERSION) {
 		printf("Unsupported QEMU-savevm version\n");
-		return -1;
+		return -EINVAL;
 	}
 
 	return 0;
@@ -275,10 +288,7 @@ int block_load(FILE *f)
 	 * empty one.
 	 */
 
-	if (get_be64(f, &x, "flag (block)")) {
-		printf("Failed to read from 'block' section\n");
-		return -1;
-	}
+	x = qemu_get_be64(f);
 
 	DEBUG(SECTION_DETAILS, "block: flags    : 0x%016lx\n", x);
 
@@ -348,11 +358,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 	}
 
 	do {
-		if (get_be64(infp, &addr, "addr (ram)")) {
-			printf("Failed to read address\n");
-			return -1;
-		}
-
+		addr = qemu_get_be64(infp);
 		flags = addr & ~PAGE_MASK;
 		addr &= PAGE_MASK;
 
@@ -368,12 +374,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 			while (total_ram_bytes) {
 
-				if (get_byte(infp, &idstr_len,
-					     "idstr-len (ram)")) {
-					printf("Failed to read id string "
-					       "len\n");
-					return -1;
-				}
+				idstr_len = qemu_get_byte(infp);
 
 				if (_fread(idstr, idstr_len, 1, infp,
 					   "idstr (ram)") != 1) {
@@ -382,12 +383,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 				}
 				idstr[idstr_len] = '\0';
 
-				if (get_be64(infp, &length,
-					     "section-len (ram)")) {
-					printf("Failed to read length\n");
-					return -1;
-				}
-
+				length = qemu_get_be64(infp);
 				kb = (length >> 10) > 0 ? length >> 10 : 0;
 				mb = (length >> 20) > 0 ? length >> 20 : 0;
 				DEBUG(DEFAULT, "section = %-32s size = %5llu "
@@ -412,12 +408,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 			if (!(flags & RAM_SAVE_FLAG_CONTINUE)) {
 
-				if (get_byte(infp, &idstr_len,
-					     "idstr-len (ram)")) {
-					printf("Failed to read id string "
-					       "len\n");
-					return -1;
-				}
+				idstr_len = qemu_get_byte(infp);
 
 				if (_fread(idstr, idstr_len, 1, infp,
 					   "idstr (ram)") != 1) {
@@ -441,10 +432,7 @@ int ram_load(FILE *infp, FILE *outfp, char *section_name, int version_id)
 
 				offset = ftell(infp);
 
-				if (get_byte(infp, &byte, "fill-byte (ram)")) {
-					printf("Failed to fill read byte\n");
-					return -1;
-				}
+				byte = qemu_get_byte(infp);
 
 				DEBUG(SECTION_DATA, "ram: fill_byte  : 0x%02x "
 				      "(read from file position 0x%016llx)\n",
@@ -654,10 +642,8 @@ int main(int argc, char *argv[])
 	while (!done) {
 		offset = ftell(infp);
 
-		if (get_byte(infp, &section_type, "section-type")) {
-			printf("Failed to read section type\n");
-			return -1;
-		}
+		section_type = qemu_get_byte(infp);
+
 		DEBUG(SECTION_INFO, "\nSection %d\n", section_count);
 		DEBUG(SECTION_INFO, "offset          : 0x%016llx\n",
 		      (unsigned long long) offset);
@@ -673,15 +659,9 @@ int main(int argc, char *argv[])
 
 			/* Read the section info/header */
 
-			if (get_be32(infp, &section_id, "section-id")) {
-				printf("Failed to read section id\n");
-				return -1;
-			}
+			section_id = qemu_get_be32(infp);
 
-			if (get_byte(infp, &idstr_len, "idstr-len")) {
-				printf("Failed to read id string len\n");
-				return -1;
-			}
+			idstr_len = qemu_get_byte(infp);
 
 			if (_fread(idstr, idstr_len, 1, infp, "idstr") != 1) {
 				printf("Failed to read idstr\n");
@@ -689,15 +669,8 @@ int main(int argc, char *argv[])
 			}
 			idstr[idstr_len] = '\0';
 
-			if (get_be32(infp, &instance_id, "instance-id")) {
-				printf("Failed to read instance id\n");
-				return -1;
-			}
-
-			if (get_be32(infp, &version_id, "version-id")) {
-				printf("Failed to read version id\n");
-				return -1;
-			}
+			instance_id = qemu_get_be32(infp);
+			version_id = qemu_get_be32(infp);
 
 			DEBUG(SECTION_INFO, "section_id      : %u\n",
 			      section_id);
@@ -721,10 +694,7 @@ int main(int argc, char *argv[])
 
 			/* Read the section info/header */
 
-			if (get_be32(infp, &section_id, "section-id")) {
-				printf("Failed to read section id\n");
-				return -1;
-			}
+			section_id = qemu_get_be32(infp);
 
 			/* Find the section info in our list so we can print
 			* its name */
