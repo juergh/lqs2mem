@@ -51,30 +51,29 @@
 #endif
 
 /*
- * The following come from libvirt's src/qemu/qemu_driver.c (v0.9.0).
- * After the qemud_save_header comes libvirt xml config, then QEMU savevm data
- * (see below).
+ * libvirt defines and structs (v1.3.4)
+ *
+ * libvirt's QEMU save file format is:
+ *   - Header (virQEMUSaveHeader)
+ *   - Domain XML config data
+ *   - QEMU savevm data
  */
 
-#define QEMUD_SAVE_MAGIC "LibvirtQemudSave"
-#define QEMUD_SAVE_VERSION 2
+/* From src/qemu/qemu_driver.c */
 
-enum qemud_save_formats {
-    QEMUD_SAVE_FORMAT_RAW = 0,
-    QEMUD_SAVE_FORMAT_GZIP = 1,
-    QEMUD_SAVE_FORMAT_BZIP2 = 2,
-    QEMUD_SAVE_FORMAT_XZ = 3,
-    QEMUD_SAVE_FORMAT_LZOP = 4,
-    QEMUD_SAVE_FORMAT_LAST
-};
+#define QEMU_SAVE_MAGIC   "LibvirtQemudSave"
+#define QEMU_SAVE_PARTIAL "LibvirtQemudPart"
+#define QEMU_SAVE_VERSION 2
 
-struct qemud_save_header {
-    char magic[sizeof(QEMUD_SAVE_MAGIC)-1];
-    int version;
-    int xml_len;
-    int was_running;
-    int compressed;
-    int unused[15];
+typedef struct _virQEMUSaveHeader virQEMUSaveHeader;
+typedef virQEMUSaveHeader *virQEMUSaveHeaderPtr;
+struct _virQEMUSaveHeader {
+    char magic[sizeof(QEMU_SAVE_MAGIC)-1];
+    uint32_t version;
+    uint32_t xml_len;
+    uint32_t was_running;
+    uint32_t compressed;
+    uint32_t unused[15];
 };
 
 /*
@@ -221,35 +220,38 @@ uint64_t qemu_get_be64(FILE *f)
 
 int libvirt_check(FILE *f)
 {
-	struct qemud_save_header hdr;
+	virQEMUSaveHeader hdr;
 
 	DEBUG(VERBOSE, "Checking for Libvirt-QEMU-save magic...\n");
 
-	if (_fread(&hdr, sizeof(hdr), 1, f, "libvirt-qemu-save-magic") != 1) {
+	if (fread(&hdr, sizeof(hdr), 1, f) != 1) {
 		printf("Failed to read Libvirt-QEMU-save header: %s\n",
 		       strerror(errno));
-		return -1;
+		rewind(f);
+		goto out;
 	}
 
-	if (memcmp(hdr.magic, QEMUD_SAVE_MAGIC, sizeof(hdr.magic))) {
+	if (memcmp(hdr.magic, QEMU_SAVE_MAGIC, sizeof(hdr.magic))) {
 		DEBUG(VERBOSE, "Invalid Libvirt-QEMU-save magic\n");
-		return -1;
+		rewind(f);
+		goto out;
 	}
 	DEBUG(VERBOSE, "Found Libvirt-QEMU-save magic\n");
 
 	DEBUG(VERBOSE, "Libvirt-QEMU-save version = %d\n", hdr.version);
-	if (hdr.version != QEMUD_SAVE_VERSION) {
+	if (hdr.version != QEMU_SAVE_VERSION) {
 		printf("Unsupported Libvirt-QEMU-save version\n");
-		return -1;
+		return -EINVAL;
 	}
 
-	/* Skip past Libvirt XML configuration to get to QEMU savevm data. */
+	/* Skip past the libvirt XML config to get to the QEMU savevm data */
 	if (fseek(f, sizeof(hdr) + hdr.xml_len, SEEK_SET)) {
 		printf("Failed seek to QEMU-savevm start: %s\n",
 		       strerror(errno));
-		return -1;
+		return -EINVAL;
 	}
 
+out:
 	return 0;
 }
 
@@ -262,7 +264,7 @@ int qemu_check(FILE *f)
 	v = qemu_get_be32(f);
 	DEBUG(VERBOSE, "QEMU-savevm magic = %08x\n", v);
 	if (v != QEMU_VM_FILE_MAGIC) {
-		printf("Invalid QEMU-savevm magic\n");
+		DEBUG(VERBOSE, "Invalid QEMU-savevm magic\n");
 		return -EINVAL;
 	}
 
@@ -627,13 +629,8 @@ int main(int argc, char *argv[])
 	DEBUG(READ_DETAILS, "--------------------------------------------");
 	DEBUG(READ_DETAILS, "-------------------------------------------\n");
 
-	/* Check for libvirt-qemu-save header */
-	if (libvirt_check(infp) < 0) {
-		rewind(infp);
-	}
-
-	/* Check for qemu-savevm header */
-	if (qemu_check(infp) < 0) {
+	/* Check for libvirt-qemu-save and/or qemu-savevm header */
+	if (libvirt_check(infp) < 0 || qemu_check(infp) < 0) {
 		printf("Unrecogized file format\n");
 		return -1;
 	}
