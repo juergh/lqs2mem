@@ -1,3 +1,11 @@
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
++                                                                             +
++ NOTE: Development of this tool has stopped in favor of its replacement      +
++       lqs2mem.py (https://github.com/juergh/lqs2mem.py)                     +
++                                                                             +
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+
 Acquiring memory from a Libvirt/KVM virtual machine
 ---------------------------------------------------
 
