@@ -578,6 +578,7 @@ int main(int argc, char *argv[])
 	uint32_t instance_id;
 	uint32_t version_id;
 	int done;
+	uint32_t name_len, i;
 
 	while (1) {
 		opt = getopt(argc, argv, "d:lw:");
@@ -699,6 +700,12 @@ int main(int argc, char *argv[])
 			DEBUG(SECTION_INFO, "section_id      : %u (%s)\n",
 			      section_id, secinfo ? secinfo->idstr : "NULL");
 
+		} else if (section_type == QEMU_VM_CONFIGURATION) {
+			name_len = qemu_get_be32(infp);
+			for (i = 0; i < name_len; i++) {
+				qemu_get_byte(infp);
+			}
+			continue;
 		} else {
 			printf("Invalid section type: %d\n", section_type);
 			return -1;
