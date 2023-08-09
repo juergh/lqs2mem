@@ -573,11 +573,13 @@ int main(int argc, char *argv[])
 	uint64_t offset;
 	uint8_t section_type;
 	uint32_t section_id;
+	uint32_t footer_section_id;
 	uint8_t idstr_len;
 	char idstr[256];
 	uint32_t instance_id;
 	uint32_t version_id;
 	int done;
+	uint32_t name_len, i;
 
 	while (1) {
 		opt = getopt(argc, argv, "d:lw:");
@@ -699,6 +701,19 @@ int main(int argc, char *argv[])
 			DEBUG(SECTION_INFO, "section_id      : %u (%s)\n",
 			      section_id, secinfo ? secinfo->idstr : "NULL");
 
+		} else if (section_type == QEMU_VM_CONFIGURATION) {
+			name_len = qemu_get_be32(infp);
+			for (i = 0; i < name_len; i++) {
+				qemu_get_byte(infp);
+			}
+			continue;
+		} else if (section_type == QEMU_VM_SECTION_FOOTER) {
+			footer_section_id = qemu_get_be32(infp);
+			if (footer_section_id != section_id) {
+				printf("Incorrect section footer: %x != %x\n", footer_section_id, section_id);
+				return -1;
+			}
+			continue;
 		} else {
 			printf("Invalid section type: %d\n", section_type);
 			return -1;
