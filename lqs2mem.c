@@ -573,6 +573,7 @@ int main(int argc, char *argv[])
 	uint64_t offset;
 	uint8_t section_type;
 	uint32_t section_id;
+	uint32_t footer_section_id;
 	uint8_t idstr_len;
 	char idstr[256];
 	uint32_t instance_id;
@@ -704,6 +705,13 @@ int main(int argc, char *argv[])
 			name_len = qemu_get_be32(infp);
 			for (i = 0; i < name_len; i++) {
 				qemu_get_byte(infp);
+			}
+			continue;
+		} else if (section_type == QEMU_VM_SECTION_FOOTER) {
+			footer_section_id = qemu_get_be32(infp);
+			if (footer_section_id != section_id) {
+				printf("Incorrect section footer: %x != %x\n", footer_section_id, section_id);
+				return -1;
 			}
 			continue;
 		} else {
